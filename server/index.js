@@ -22,6 +22,26 @@ const { DB_PATH } = require('./db');
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const IS_HTTPS = (process.env.APP_ORIGIN || '').startsWith('https://');
+
+/**
+ * Content Security Policy for HTML pages. The app has no inline scripts, so
+ * script-src is 'self' outright. Inline style attributes are used by the
+ * interface (the seating canvas positions tables with them), hence
+ * 'unsafe-inline' for styles only. Images: self, the data-URI favicon, and
+ * the Unsplash CDN the sample listings use.
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src https://fonts.gstatic.com",
+  "img-src 'self' data: https://images.unsplash.com",
+  "connect-src 'self'",
+  "frame-ancestors 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
 
 /* ------------------------------------------------------------------ */
 /* route table                                                         */
@@ -118,7 +138,11 @@ function serveStatic(req, res, pathname) {
       const indexPath = path.join(PUBLIC_DIR, 'index.html');
       fs.readFile(indexPath, (indexErr, buffer) => {
         if (indexErr) { json(res, 404, { error: 'Not found.' }); return; }
-        res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' });
+        res.writeHead(200, {
+          'content-type': MIME['.html'],
+          'cache-control': 'no-cache',
+          'content-security-policy': CSP,
+        });
         res.end(buffer);
       });
       return;
@@ -129,12 +153,14 @@ function serveStatic(req, res, pathname) {
     if (req.headers['if-none-match'] === etag) { res.writeHead(304); res.end(); return; }
 
     const immutable = ext !== '.html';
-    res.writeHead(200, {
+    const headers = {
       'content-type': MIME[ext] || 'application/octet-stream',
       'cache-control': immutable ? 'public, max-age=3600' : 'no-cache',
       etag,
       'x-content-type-options': 'nosniff',
-    });
+    };
+    if (ext === '.html') headers['content-security-policy'] = CSP;
+    res.writeHead(200, headers);
     fs.createReadStream(resolved).pipe(res);
   });
 }
@@ -155,6 +181,8 @@ const server = http.createServer(async (req, res) => {
 
   res.setHeader('x-frame-options', 'SAMEORIGIN');
   res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
+  // Only meaningful once the site is actually behind TLS, so gated on APP_ORIGIN.
+  if (IS_HTTPS) res.setHeader('strict-transport-security', 'max-age=15552000');
 
   // Vendor uploaded images. Served only by the exact filename recorded in the
   // database, so a crafted path cannot reach anything outside the upload folder.
@@ -201,7 +229,8 @@ const server = http.createServer(async (req, res) => {
     // A raw body route that failed part way through leaves unread bytes on the
     // socket. Reusing that connection makes the *next* request fail for no
     // visible reason, so close it rather than keeping it alive.
-    if (req.method === 'POST' && /^\/api\/vendors\/me\/images$/.test(url.pathname)) {
+    if (req.method === 'POST'
+      && (/^\/api\/vendors\/me\/images$/.test(url.pathname) || url.pathname === '/api/stripe/webhook')) {
       res.setHeader('connection', 'close');
     }
     if (error instanceof HttpError) {
@@ -243,7 +272,38 @@ function aiBanner() {
   return `offline engine. ${state.reason}`;
 }
 
+/**
+ * Graceful shutdown. Platform deploys send SIGTERM and give the process a few
+ * seconds: stop accepting connections, let in-flight requests finish, then
+ * exit. SQLite in WAL mode needs no ceremony beyond a clean process exit.
+ */
+function shutdown(signal) {
+  process.stdout.write(`[aeterna] ${signal} received, closing\n`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 8000).unref();
+}
+
+function bootWarnings() {
+  const warnings = [];
+  if (IS_HTTPS && !process.env.AETERNA_SECRET) {
+    warnings.push('APP_ORIGIN is https but AETERNA_SECRET is not set. Sessions are signed with the per-disk dev secret. Set a real one: openssl rand -hex 32');
+  }
+  if (!process.env.APP_ORIGIN) {
+    warnings.push('APP_ORIGIN is not set. Emails, RSVP links and Stripe redirects will use http://localhost. Fine in development, wrong in production.');
+  }
+  if (process.env.AETERNA_DEMO === '1') {
+    warnings.push('AETERNA_DEMO=1 seeds demo accounts with published passwords. Never set this in production.');
+  }
+  if (Number(process.env.AETERNA_RATE_MULTIPLIER) > 1) {
+    warnings.push(`AETERNA_RATE_MULTIPLIER=${process.env.AETERNA_RATE_MULTIPLIER} relaxes rate limits. Meant for the test suite, not production.`);
+  }
+  return warnings.map((w) => `  warning    ${w}\n`).join('');
+}
+
 if (require.main === module) {
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
   // Establish the real planner mode before announcing anything about it.
   // Presence of an API key proves nothing, so we ask the provider.
   ai.probe().then(() => {
@@ -252,7 +312,8 @@ if (require.main === module) {
       `AETERNA is running on http://localhost:${PORT}\n` +
       `  database   ${DB_PATH}\n` +
       `  vendors    ${seeded.skipped ? `${seeded.vendors} already present` : `${seeded.vendors} sample listings seeded`}\n` +
-      `  AI planner ${aiBanner()}\n`
+      `  AI planner ${aiBanner()}\n` +
+      bootWarnings()
       );
     });
   });

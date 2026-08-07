@@ -28,6 +28,29 @@ there is to think about:
 Whatever the host: run `node server/index.js`, mount a persistent volume at
 `data/`, put TLS in front.
 
+## The fast path: Fly.io with the included config
+
+A `Dockerfile` and `fly.toml` ship in the repository. The image is node:22-alpine,
+runs as a non-root user, keeps state in `/data`, and answers a container
+healthcheck on `/api/health`.
+
+```bash
+fly launch --no-deploy --copy-config   # accept or rename the app
+fly volumes create aeterna_data --region lhr --size 1
+fly secrets set AETERNA_SECRET=$(openssl rand -hex 32)
+fly secrets set APP_ORIGIN=https://<your-app>.fly.dev
+fly deploy
+```
+
+Then create the first admin over `fly ssh console` (the exact one-liner is in
+the checklist below and in fly.toml's comments). Set the optional keys
+(Anthropic, Stripe, Resend) as `fly secrets` whenever they are ready; the app
+reports its honest mode for each until then.
+
+Security posture the server handles itself when `APP_ORIGIN` is https:
+session cookies carry the `Secure` flag, `Strict-Transport-Security` is sent,
+and every HTML response carries a Content Security Policy with `script-src 'self'`.
+
 ## Environment variables
 
 | Variable | Required | Purpose |

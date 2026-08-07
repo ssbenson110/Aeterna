@@ -1,0 +1,43 @@
+# Fly.io configuration for AETERNA.
+#
+# First deploy:
+#   fly launch --no-deploy --copy-config     (accept the app name it offers, or set your own)
+#   fly volumes create aeterna_data --region lhr --size 1
+#   fly secrets set AETERNA_SECRET=$(openssl rand -hex 32)
+#   fly secrets set APP_ORIGIN=https://<your-app>.fly.dev
+#   fly deploy
+#
+# Optional, when ready:
+#   fly secrets set ANTHROPIC_API_KEY=... STRIPE_SECRET_KEY=... STRIPE_WEBHOOK_SECRET=... RESEND_API_KEY=... EMAIL_FROM="AETERNA <hello@yourdomain>"
+#
+# First admin account (demo mode is off in production, so there is no seed):
+#   fly ssh console -C "node -e \"const{run,id,now}=require('/app/server/db');const{hashPassword}=require('/app/server/lib/auth');run('INSERT INTO users (id,email,password_hash,role,display_name,created_at) VALUES (?,?,?,?,?,?)',id('usr'),'you@example.com',hashPassword('CHOOSE-A-LONG-PASSWORD'),'admin','AETERNA team',now())\""
+
+app = "aeterna"
+primary_region = "lhr"
+
+[build]
+
+[mounts]
+  source = "aeterna_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # SQLite on a single volume: exactly one machine, always on. The in-process
+  # sweeps (enquiry rerouting, badge expiry) rely on the process running.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

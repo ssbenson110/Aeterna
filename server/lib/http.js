@@ -150,6 +150,13 @@ function parseCookies(header) {
   return out;
 }
 
+/**
+ * When APP_ORIGIN says the site is served over https, session cookies carry
+ * the Secure flag so they are never sent over plaintext. Local development
+ * (no APP_ORIGIN, or an http one) is unaffected.
+ */
+const COOKIE_SECURE = (process.env.APP_ORIGIN || '').startsWith('https://');
+
 function setCookie(res, name, value, { maxAge = 60 * 60 * 24 * 30, httpOnly = true } = {}) {
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
@@ -158,11 +165,13 @@ function setCookie(res, name, value, { maxAge = 60 * 60 * 24 * 30, httpOnly = tr
     'SameSite=Lax',
   ];
   if (httpOnly) parts.push('HttpOnly');
+  if (COOKIE_SECURE) parts.push('Secure');
   appendHeader(res, 'set-cookie', parts.join('; '));
 }
 
 function clearCookie(res, name) {
-  appendHeader(res, 'set-cookie', `${name}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`);
+  const base = `${name}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`;
+  appendHeader(res, 'set-cookie', COOKIE_SECURE ? `${base}; Secure` : base);
 }
 
 function appendHeader(res, name, value) {

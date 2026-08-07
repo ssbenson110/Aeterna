@@ -58,7 +58,14 @@ module.exports = {
    */
   'POST /api/stripe/webhook': async ({ req }) => {
     const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
+    let size = 0;
+    for await (const chunk of req) {
+      // Stripe events are a few KB. A cap keeps a hostile peer from streaming
+      // an unbounded body into memory before signature verification can refuse it.
+      size += chunk.length;
+      if (size > 1024 * 1024) throw new HttpError(413, 'Webhook body is too large.');
+      chunks.push(chunk);
+    }
     const rawBody = Buffer.concat(chunks).toString('utf8');
 
     const verdict = stripe.verifySignature(rawBody, req.headers['stripe-signature']);
