@@ -1,0 +1,4 @@
+{
+  "//": "Scopes the browser modules as ESM for Node tooling (the smoke tests import them directly). The root package is CommonJS for the server.",
+  "type": "module"
+}

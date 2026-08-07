@@ -1,0 +1,8 @@
+node_modules/
+data/*.db
+data/*.db-*
+data/.secret
+data/server.pid
+dist/
+data/uploads/
+data/outbox/

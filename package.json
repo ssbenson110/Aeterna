@@ -1,0 +1,16 @@
+{
+  "name": "aeterna",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A two-sided UK wedding marketplace. One AI planner for the couple, one verified vendor per enquiry.",
+  "engines": { "node": ">=22" },
+  "type": "commonjs",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "AETERNA_DEMO=1 AETERNA_LOG=1 node server/index.js",
+    "test": "node scripts/smoke-views.mjs",
+    "build:demo": "node scripts/build-static.js"
+  },
+  "dependencies": {}
+}
